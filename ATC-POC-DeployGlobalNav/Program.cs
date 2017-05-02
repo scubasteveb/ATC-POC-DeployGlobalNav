@@ -46,7 +46,7 @@ namespace ATC_POC_DeployGlobalNav
             Console.WriteLine("Go and update the Global Nav file now");
             Console.ReadLine();
             // APPLY the template to new site from 
-           // ApplyProvisioningTemplate(defaultForeground, targetWebUrl, userName, pwd);
+            ApplyProvisioningTemplate(defaultForeground, listofSites, userName, pwd);
 
             // Pause and modify the UI to indicate that the operation is complete
             Console.ForegroundColor = ConsoleColor.White;
@@ -203,6 +203,63 @@ namespace ATC_POC_DeployGlobalNav
             Console.WriteLine("");
 
             return value;
+        }
+
+        private static void ApplyProvisioningTemplate(ConsoleColor defaultForeground, List<GlobalNavSiteCollections> sitesToApply, string userName, SecureString pwd)
+        {
+            foreach (GlobalNavSiteCollections site in sitesToApply)
+            {
+                using (var ctx = new ClientContext(site.SiteURL))
+                {
+                    // ctx.Credentials = new NetworkCredentials(userName, pwd);
+                    ctx.Credentials = new SharePointOnlineCredentials(userName, pwd);
+                    ctx.RequestTimeout = Timeout.Infinite;
+
+                    // Just to output the site details
+                    Web web = ctx.Web;
+                    ctx.Load(web, w => w.Title);
+                    ctx.ExecuteQueryRetry();
+
+                    // Configure the XML file system provider
+                    XMLTemplateProvider providerNewNav =
+                    new XMLFileSystemTemplateProvider(@"c:\temp\pnpprovisioningdemo\", "");
+
+                    // Load the template from the XML stored copy
+                    ProvisioningTemplate templateNewNav = providerNewNav.GetTemplate("GlobalNav.xml");
+
+                    // start timer
+                    Console.WriteLine("Start Applying Template: {0:hh.mm.ss}", DateTime.Now);
+
+                    // Apply the template to another site
+                    var applyingInformation = new ProvisioningTemplateApplyingInformation();
+
+                    // overwrite and remove existing navigation nodes
+                    applyingInformation.ClearNavigation = true;
+
+                    applyingInformation.ProgressDelegate = (message, step, total) =>
+                    {
+                        Console.WriteLine("{0}/{1} Provisioning {2}", step, total, message);
+                    };
+
+                    // Apply the template to the site
+                    web.ApplyProvisioningTemplate(templateNewNav, applyingInformation);
+
+                    Console.WriteLine("Done applying template: {0:hh.mm.ss}", DateTime.Now);
+
+                    // Check governance of property bags
+                    Console.WriteLine("Look what the engine left behind!");
+                    Console.Write("_PnP_ProvisioningTemplateId: ");
+
+                    Console.WriteLine(
+                        web.GetPropertyBagValueString("_PnP_ProvisioningTemplateId", "")
+                    );
+                    Console.Write("_PnP_ProvisioningTemplateInfo: ");
+
+                    Console.WriteLine(
+                        web.GetPropertyBagValueString("_PnP_ProvisioningTemplateInfo", "")
+                    );
+                }
+            }
         }
 
     }
