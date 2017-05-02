@@ -21,7 +21,7 @@ namespace ATC_POC_DeployGlobalNav
             ConsoleColor defaultForeground = Console.ForegroundColor;
 
             // Collect information 
-            string templateWebUrl = GetInput("Enter the URL of the template site: ", false, defaultForeground);
+            string templateWebUrl = GetInput("Enter the URL of the Infrastructure template site: ", false, defaultForeground);
             string targetWebUrl = GetInput("Enter the URL of the target site: ", false, defaultForeground);
             string infrastructureUrl = GetInput("Enter the URL of the Infrastructure site with list: ", false, defaultForeground);
             string userName = GetInput("Enter your user name:", false, defaultForeground);
@@ -43,10 +43,10 @@ namespace ATC_POC_DeployGlobalNav
             Console.WriteLine("Determining which sites to apply global nav to now based on SP List");
             var listofSites = GetProvisioningSitesFromList(defaultForeground, infrastructureUrl, userName, pwd);
 
-            Console.WriteLine("Go and update the Global Nav file now");
+            Console.WriteLine("Go and update the Global Nav file now and Press Enter when ready");
             Console.ReadLine();
             // APPLY the template to new site from 
-            ApplyProvisioningTemplate(defaultForeground, listofSites, userName, pwd);
+            RetrieveProvisioningTemplateFromSPO(defaultForeground, listofSites, infrastructureUrl, userName, pwd);
 
             // Pause and modify the UI to indicate that the operation is complete
             Console.ForegroundColor = ConsoleColor.White;
@@ -104,10 +104,14 @@ namespace ATC_POC_DeployGlobalNav
                 ctx.Credentials = new SharePointOnlineCredentials(userName, pwd);
                 ctx.RequestTimeout = Timeout.Infinite;
 
+                
                 // Just to output the site details
                 Web web = ctx.Web;
                 ctx.Load(web, w => w.Title);
                 ctx.ExecuteQueryRetry();
+
+               
+
 
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.WriteLine("Your site title is: " + ctx.Web.Title);
@@ -205,8 +209,70 @@ namespace ATC_POC_DeployGlobalNav
             return value;
         }
 
-        private static void ApplyProvisioningTemplate(ConsoleColor defaultForeground, List<GlobalNavSiteCollections> sitesToApply, string userName, SecureString pwd)
+        /// <summary>
+        /// This method will retrieve the PnP provisioning template XML file from a SP Doc Library in the Infrastructure site and load it into a ProvisioningTemplate object
+        /// </summary>
+        /// <param name="defaultForeground"></param>
+        /// <param name="sitesToApply"></param>
+        /// <param name="infrastructureSite"></param>
+        /// <param name="userName"></param>
+        /// <param name="pwd"></param>
+        private static void RetrieveProvisioningTemplateFromSPO(ConsoleColor defaultForeground, List<GlobalNavSiteCollections> sitesToApply, string infrastructureSite, string userName, SecureString pwd)
         {
+            ProvisioningTemplate template;
+
+            using (var context = new ClientContext(infrastructureSite))
+            {
+                context.Credentials = new SharePointOnlineCredentials(userName, pwd);
+                context.RequestTimeout = Timeout.Infinite;
+                Web web = context.Web;
+
+                // Get List of Template Files to store it
+                List list = web.Lists.GetByTitle("ProvisioningTemplates");
+                CamlQuery query = CamlQuery.CreateAllItemsQuery(100);
+                ListItemCollection items = list.GetItems(query);
+                context.Load(items,
+                    includes => includes.Include(i => i.File
+                   ));
+                context.ExecuteQueryRetry();
+
+                web.EnsureProperty(w => w.Url);
+
+                // New version using SharePoint Connector
+                // Configure the SharePoint Connector
+                var sharepointConnector = new SharePointConnector(context, web.Url,
+                        "ProvisioningTemplates");
+
+                foreach (ListItem item in items)
+                {
+                    // Get the template file name and server relative URL
+                    item.File.EnsureProperties(f => f.Name, f => f.ServerRelativeUrl);
+
+                    XMLSharePointTemplateProvider provider = null;
+
+                    // Otherwise use the .XML template provider for SharePoint
+                    provider =
+                        new XMLSharePointTemplateProvider(context, web.Url,
+                            "ProvisioningTemplates");
+
+                    // Get the template
+                    template = provider.GetTemplate(item.File.Name);
+                    ApplyPnPTemplate(sitesToApply, userName, pwd, template);
+
+                }
+            }
+        }
+
+        /// <summary>
+        /// This method will apply the PnP template to all sites in the SP List that have the 'Apply Global Nav' field set to Yes
+        /// </summary>
+        /// <param name="sitesToApply"></param>
+        /// <param name="userName"></param>
+        /// <param name="pwd"></param>
+        /// <param name="template"></param>
+        private static void ApplyPnPTemplate(List<GlobalNavSiteCollections> sitesToApply, string userName, SecureString pwd, ProvisioningTemplate template)
+        {
+           
             foreach (GlobalNavSiteCollections site in sitesToApply)
             {
                 using (var ctx = new ClientContext(site.SiteURL))
@@ -219,13 +285,6 @@ namespace ATC_POC_DeployGlobalNav
                     Web web = ctx.Web;
                     ctx.Load(web, w => w.Title);
                     ctx.ExecuteQueryRetry();
-
-                    // Configure the XML file system provider
-                    XMLTemplateProvider providerNewNav =
-                    new XMLFileSystemTemplateProvider(@"c:\temp\pnpprovisioningdemo\", "");
-
-                    // Load the template from the XML stored copy
-                    ProvisioningTemplate templateNewNav = providerNewNav.GetTemplate("GlobalNav.xml");
 
                     // start timer
                     Console.WriteLine("Start Applying Template: {0:hh.mm.ss}", DateTime.Now);
@@ -242,7 +301,7 @@ namespace ATC_POC_DeployGlobalNav
                     };
 
                     // Apply the template to the site
-                    web.ApplyProvisioningTemplate(templateNewNav, applyingInformation);
+                    web.ApplyProvisioningTemplate(template, applyingInformation);
 
                     Console.WriteLine("Done applying template: {0:hh.mm.ss}", DateTime.Now);
 
@@ -258,10 +317,19 @@ namespace ATC_POC_DeployGlobalNav
                     Console.WriteLine(
                         web.GetPropertyBagValueString("_PnP_ProvisioningTemplateInfo", "")
                     );
+
+
+                    // Configure the XML file system provider
+                    //XMLTemplateProvider providerNewNav =
+                    // new XMLFileSystemTemplateProvider(@"c:\temp\pnpprovisioningdemo\", "");
+
+                    // Load the template from the XML stored copy
+                    // ProvisioningTemplate templateNewNav = providerNewNav.GetTemplate("GlobalNav.xml");
+
+
                 }
             }
         }
-
     }
     public class GlobalNavSiteCollections
     {
